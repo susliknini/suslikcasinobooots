@@ -14,7 +14,7 @@ API_ID = 24463378  # Замените на ваш API ID
 API_HASH = 'e7c3fb1d6c2a8b3a9422607a350754c1'  # Замените на ваш API HASH
 BOT_TOKEN = '7764512749:AAHpB7bp0Mohsbb2EEPo5pEBN8tOg9YFYrE'  # Замените на токен вашего бота
 
- Redis конфигурация для Render
+# Redis конфигурация для Render
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
 
 # Создаем папку для сессий
